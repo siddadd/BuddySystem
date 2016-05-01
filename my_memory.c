@@ -4,6 +4,7 @@
 #include<math.h>
 #include<assert.h>
 
+//#define DEBUG
 #define NUM_LEVELS 11
 
 typedef struct node node;
@@ -37,15 +38,17 @@ void merge_buddy_nodes(int, node *, node *);
 int update_buddy_list(int, node *);
 int delete_at_buddy_head(int);
 int add_buddy_in_order_of_start_address(llist *, void *, void *, int);
+int add_buddy_node_in_order_of_start_address(llist *, node *);
 // Link List Operations
 int add(llist *, void *, void *, int);
+int add_node(llist *, node *);
 int rmv_by_id(llist *, int);
 // Debug
 void print_queue(llist*);
 void print_buddy_array(void);
 //Global Variables
 llist *ll;
-llist* buddy_array[11] = { NULL };
+llist* buddy_array[NUM_LEVELS] = { NULL };
 int _type;
 int _mem_size;
 void* _start_of_address_space;
@@ -172,13 +175,10 @@ node *find_buddy_node(int size) {
 // Function to free memory - Buddy System
 void my_free_buddy(void *ptr) {
 	ptr = (void *) (ptr - 4);		//compensate for the header
-	int size = *(int *) ptr;//*(int *)(_start_of_address_space+(int)ptr);//get the size from the memory location
+	int size = *(int *) ptr;//get size
 	// Min Request = 1 KB
 	int buddy_index = ceil(log(size+4) / log(2)) - (log(1024) / log(2));
 	int block_size = (int) 1024 * pow(2, buddy_index);
-
-	llist *templ = malloc(sizeof(llist));
-	templ = buddy_array[buddy_index];
 
 	*(int *) (ptr) = 0;	//clear the size stored at that memory location.
 	node *new = malloc(sizeof(node));
@@ -186,8 +186,10 @@ void my_free_buddy(void *ptr) {
 	new->end_addr = new->start_addr + block_size;	// + 4;
 	new->size = block_size;	// + 4;
 
-	//	if(templ->head == NULL){
-	if (templ == NULL ) {  // initialize list and add head and tail
+	llist *templ = malloc(sizeof(llist));
+	templ = buddy_array[buddy_index];
+
+	if (templ == NULL ) {  // empty list so only this node needs to be inserted => initialize list and add head and tail
 		templ = init_buddy_freelist_take2();
 		templ->head = new;
 		templ->tail = new;
@@ -216,15 +218,16 @@ void my_free_buddy(void *ptr) {
 		}
 	}
 
+    // if there are buddies, recursively coalesce using merge operation
 	if (((int) (new->start_addr) / ((int) pow(2, buddy_index) * 1024) % 2)
 			!= 0) { // odd
 		if (new->prev != NULL && new->prev->end_addr == new->start_addr) {
-			merge_buddy_nodes(buddy_index, new->prev, new);
+			merge_buddy_nodes(buddy_index, new->prev, new); // merge at this level
 		}
 	} else // even
 	{
 		if (new->next != NULL && new->next->start_addr == new->end_addr) { //merging with next node
-			merge_buddy_nodes(buddy_index, new, new->next);
+			merge_buddy_nodes(buddy_index, new, new->next); // merge at this level
 		}
 	}
 }
@@ -277,6 +280,22 @@ int add(llist *ll, void *start, void *end, int size) {
 	return 0;
 }
 
+
+int add_node(llist *ll, node *new) {
+	if (new == NULL )
+		return -1;
+	else {
+		if (ll->tail != NULL ) {
+			new->prev = ll->tail;
+			ll->tail->next = new;
+		}
+		ll->tail = new;
+		if (ll->head == NULL ) /* first value */
+			ll->head = new;
+		return 0;
+	}
+}
+
 int delete_at_buddy_head(int level) {
 	llist* temp = buddy_array[level];
 	temp->head = temp->head->next;
@@ -288,6 +307,9 @@ int delete_at_buddy_head(int level) {
 // Function to add into free list based on start address (assumption : at least one node is in list already
 int add_buddy_in_order_of_start_address(llist *ll, void* start, void *end,
 		int size) {
+	#ifdef DEBUG
+	printf("%s\n", __func__);
+	#endif
 	node *new = malloc(sizeof(node));
 	node* temp = malloc(sizeof(node));
 	if (new == NULL || temp == NULL )
@@ -324,27 +346,63 @@ int add_buddy_in_order_of_start_address(llist *ll, void* start, void *end,
 	return 0;
 }
 
+int add_buddy_node_in_order_of_start_address(llist *ll, node* new) 
+{
+	#ifdef DEBUG
+	printf("%s\n", __func__);
+	#endif
+	node* temp = malloc(sizeof(node));
+	if (temp == NULL )
+		return -1;
+
+	if (ll->head == NULL ) {	//empty list
+		ll->head = new;
+		ll->tail = new;
+		new->next = NULL;
+		new->prev = NULL;
+	} else if (ll->head->start_addr > new->start_addr) {	//to be added at head
+		new->next = ll->head;
+		ll->head->prev = new;
+		new->prev = NULL;
+		ll->head = new;
+	} else if (ll->tail->start_addr < new->start_addr) {	//to be added at the tail
+		new->next = NULL;
+		new->prev = ll->tail;
+		ll->tail->next = new;
+		ll->tail = new;
+	} else {	//add in the middle with
+		while (temp != NULL && new->start_addr < temp->start_addr)
+			temp = temp->next;
+		//start < temp->start_addr => new to be put before temp
+		temp->prev->next = new;
+		new->prev = temp->prev;
+		new->next = temp;
+		temp->prev = new;
+	}
+	return 0;
+}
+
 // Function to update buddy list after a merge
 int update_buddy_list(int index, node *tempn) {
-
+	#ifdef DEBUG
+	printf("%s:level %d\n", __func__, index);
+	#endif
 	llist *templ = malloc(sizeof(llist));
-	llist *templ2 = malloc(sizeof(llist));
-	if (templ == NULL || templ2 == NULL )
+	//llist *templ2 = malloc(sizeof(llist));
+	if (templ == NULL)
 		return -1;
 
 	templ = buddy_array[index];
-	templ2 = buddy_array[index + 1];
+	//templ2 = buddy_array[index + 1];
 	// Take the misfit, move it up one level
 	if (tempn != NULL ) {
 		if (templ == NULL ) // Need to initialize the level above and add the misfit as first node
 		{
 			buddy_array[index] = init_buddy_freelist_take2();
-			add(buddy_array[index], tempn->start_addr, tempn->end_addr,
-					tempn->size);
+			add_node(buddy_array[index], tempn);
 		} else	// just add in order
 		{
-			add_buddy_in_order_of_start_address(templ, tempn->start_addr,
-					tempn->end_addr, tempn->size);
+			add_buddy_node_in_order_of_start_address(templ, tempn);
 		}
 	}
 	return 0;
@@ -352,18 +410,23 @@ int update_buddy_list(int index, node *tempn) {
 
 // Function to recursively merge buddies
 void merge_buddy_nodes(int buddy_level, node *first, node *second) {
+	#ifdef DEBUG
+	printf("%s: level %d\n", __func__, buddy_level);
+	#endif
 	llist *templ = malloc(sizeof(llist));
 	templ = buddy_array[buddy_level];
 
 	buddy_level = buddy_level + 1;
 
-	if (buddy_level > NUM_LEVELS)
+	if (buddy_level > NUM_LEVELS-1)
 		return; // base case
 	else {
 		node *node_at_upper_level = malloc(sizeof(node));
 		node_at_upper_level->start_addr = first->start_addr;
 		node_at_upper_level->end_addr = second->end_addr;
 		node_at_upper_level->size = first->size + second->size;
+		node_at_upper_level->next = NULL;  // this will be updated in update_buddy_list
+		node_at_upper_level->prev = NULL;  // this will be updated in update_buddy_list
 
 		int stat = -1;
 
@@ -383,6 +446,7 @@ void merge_buddy_nodes(int buddy_level, node *first, node *second) {
 		// check for merge again
 		if (((int) (node_at_upper_level->start_addr)
 				/ ((int) pow(2, buddy_level) * 1024) % 2) != 0) { // odd
+			printf("Odd\n");
 			if (node_at_upper_level->prev != NULL
 					&& node_at_upper_level->prev->end_addr
 							== node_at_upper_level->start_addr) { //merging with previous node
@@ -395,7 +459,7 @@ void merge_buddy_nodes(int buddy_level, node *first, node *second) {
 							== node_at_upper_level->end_addr) { //merging with next node
 				merge_buddy_nodes(buddy_level, node_at_upper_level,
 						node_at_upper_level->next);
-			}
+			} 
 		}
 	}
 }
@@ -414,7 +478,7 @@ void print_queue(llist *ll) {
 
 void print_buddy_array(void) {
 	int i;
-	for (i = 0; i < 11; i++) {
+	for (i = 0; i < NUM_LEVELS; i++) {
 		printf("Pointer at level %d is %d", i, (int) buddy_array[i]);
 		if (buddy_array[i] != NULL )
 			print_queue(buddy_array[i]);

@@ -6,7 +6,7 @@ import subprocess
 import difflib
 
 RUN_ALL = 0
-RUN_1 = 0
+RUN_1 = 1
 RUN_2 = 0
 RUN_3 = 0
 RUN_4 = 1
